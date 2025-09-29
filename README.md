@@ -1,123 +1,126 @@
-# Incident Response in Jira  
-**Subject:** Structured Incident Management & Resolution Tracking  
-**Version:** 1.0   
+# ECS Rollback & Incident Response  
+**Subject:** Containerized Workload Resilience and Traffic Management   
+**Version:** 1.0  
+**Last Updated:** [29-09-2025]
 
 ---
 
 ## 1. Executive Summary  
-Jira is widely adopted for issue tracking and agile workflows, but it also provides a robust framework for managing **incidents in production environments**. A disciplined **Incident Response Process in Jira** ensures that outages, performance degradations, or security events are logged, classified, triaged, and resolved systematically.  
+Amazon ECS enables organizations to run containerized workloads without managing Kubernetes complexity. However, containerized applications in production face risks during deployments—ranging from faulty images to service crashes and misconfigured task definitions. Rollback and incident response in ECS must therefore be tightly integrated with deployment strategies, observability pipelines, and governance controls.  
 
-This documentation defines a **professional-grade incident management workflow in Jira**, covering:  
-- Incident lifecycle from detection to closure.  
-- Standardized Jira issue types, fields, and workflows.  
-- Severity-based classification and SLAs.  
-- Integration with monitoring/alerting tools (PagerDuty, CloudWatch, Datadog).  
-- Governance, reporting, and continuous improvement.  
+This document presents a **resilience playbook** to handle ECS incidents effectively. It covers **rollback mechanisms (task definition revisions, service redeployment, blue/green deployments), incident workflows (detection, triage, containment, resolution), and traffic control** using Application Load Balancers (ALB) or Service Mesh.  
+
+**Key Takeaways:**  
+- Rollback in ECS is primarily managed via **task definition revisions** and **deployment configurations**.  
+- Incident response must focus on **fast triage, controlled redeployments, and minimal traffic disruption**.  
+- Blue/green and canary deployments via **ECS + CodeDeploy** drastically improve rollback agility.  
+- Governance, compliance, and RCA discipline are as important as the technical fix.  
 
 ---
 
 ## 2. Scope  
-- **Applies to:** All production incidents managed by DevOps, SRE, or IT Ops teams.  
-- **Focus Areas:** Jira ticketing workflow, severity classification, escalation, and reporting.  
-- **Excludes:** Non-production bugs, feature requests (tracked separately in Jira Software).  
+- **Applies to:** ECS workloads running in production (both EC2 launch type and Fargate).  
+- **Focus areas:** Rollback execution, incident lifecycle, traffic stability.  
+- **Excludes:** Kubernetes (covered separately) and serverless Lambda workloads.  
 
 ---
 
-## 3. Jira Setup for Incident Response  
+## 3. ECS Rollback Strategies  
 
-### 3.1 Recommended Issue Types  
-- **Incident:** Used for outages, degraded performance, or operational failures.  
-- **Problem:** Root cause identified, requiring deeper fix.  
-- **Change:** Linked to incident if resolution involves deployment or rollback.  
-- **Task:** Follow-up actions post-incident (documentation, automation fixes).  
+### 3.1 Task Definition Revisions  
+ECS creates a **new revision** whenever a task definition is updated. Rollback simply means updating the ECS service to use a **previous stable revision**.  
+- **Pro:** Quick and reversible.  
+- **Con:** Cannot revert database/schema changes automatically.  
 
-### 3.2 Key Fields  
-- **Incident Summary:** Clear description of issue.  
-- **Severity:** SEV-1, SEV-2, SEV-3.  
-- **Impact:** Business services or users affected.  
-- **Root Cause:** Identified after RCA.  
-- **Resolution Notes:** Actions taken to fix.  
-- **Linked Issues:** Problems, changes, or tasks tied to the incident.  
+### 3.2 Service Deployment Configurations  
+- ECS supports **minimumHealthyPercent** and **maximumPercent** parameters during updates.  
+- Example: Set `minimumHealthyPercent=100` and `maximumPercent=200` → ensures zero-downtime deployments.  
+- Rollback = redeploy service with previous revision.  
 
----
+### 3.3 Blue/Green Deployments via CodeDeploy  
+- ECS integrates with **AWS CodeDeploy** to perform blue/green updates.  
+- New tasks (green) are launched alongside old tasks (blue).  
+- Traffic is shifted gradually through ALB target groups.  
+- Rollback = instant shift back to blue environment.  
 
-## 4. Incident Response Workflow in Jira  
+**Comparison Table:**  
 
-### 4.1 Lifecycle Stages  
-1. **Detection:** Incident created in Jira (manually or via monitoring integration).  
-2. **Triage:** Assign severity, add impacted services, notify stakeholders.  
-3. **Containment:** Temporary rollback or mitigation applied.  
-4. **Resolution:** Root cause fix implemented, validated, and tested.  
-5. **Closure:** Ticket closed with RCA attached and learnings documented.  
-
-### 4.2 Jira Workflow Example  
-
-| Stage          | Jira Status      | Owner            | SLA Target              |
-|----------------|------------------|------------------|-------------------------|
-| Detection      | New              | Monitoring/On-call| Within 5 minutes of alert |
-| Triage         | In Progress      | Incident Commander| 15 minutes for SEV-1   |
-| Containment    | Mitigation Applied| DevOps/SRE       | 30 minutes for SEV-1   |
-| Resolution     | Resolved         | DevOps/Developer | Within agreed SLA       |
-| Closure        | Closed           | Manager/SRE Lead | Postmortem in 48 hours |
+| Strategy                 | Speed of Rollback | Risk Exposure | Complexity | Use Case                               |
+|---------------------------|------------------|--------------|------------|----------------------------------------|
+| Task Definition Revision | Fast             | Medium       | Low        | Quick fixes for faulty images/config   |
+| Service Redeployment     | Moderate         | Medium       | Medium     | Application-level misconfiguration     |
+| Blue/Green Deployment    | Instant          | Very Low     | High       | Business-critical, zero-downtime apps  |
 
 ---
 
-## 5. Severity Classification in Jira  
+## 4. Incident Response Workflow  
 
-| Severity | Criteria                                | Example Incident                        | Action Required                          |
-|----------|-----------------------------------------|-----------------------------------------|------------------------------------------|
-| SEV-1    | Full outage, critical business impact   | Production API down, customer impact     | Immediate response, exec notification     |
-| SEV-2    | Partial outage, degraded performance    | High latency in one region              | Rollback/fix within hours                 |
-| SEV-3    | Minor disruption, limited user impact   | Occasional errors, non-critical service | Monitor, fix in next release cycle        |
+### 4.1 Lifecycle  
+1. **Detection** – CloudWatch alarms, Container Insights, ALB health checks.  
+2. **Triage** – Identify scope (service-level or cluster-wide).  
+3. **Containment** – Scale down faulty tasks, rollback to prior revision, shift traffic.  
+4. **Resolution** – Patch container image or fix IAM/Networking issues.  
+5. **Postmortem** – RCA, corrective actions, update runbooks.  
+
+### 4.2 Severity Classification  
+
+| Severity | Impact                                   | Example Case                           | Action                                |
+|----------|-------------------------------------------|-----------------------------------------|---------------------------------------|
+| SEV-1    | Major outage, >50% tasks failing          | All tasks crash after image deploy      | Immediate rollback to prior revision  |
+| SEV-2    | Partial outage, degraded latency/throughput| ALB shows 40% unhealthy targets         | Reduce traffic, rollback, monitor     |
+| SEV-3    | Minor issue, localized service disruption | One ECS service misconfigured           | Redeploy service, observe             |
 
 ---
 
-## 6. Roles & Responsibilities  
+## 5. Roles & Responsibilities  
 
-- **Incident Commander (SRE/Lead):** Oversees the incident, owns Jira ticket, coordinates resolution.  
-- **DevOps Engineers:** Execute rollbacks, apply fixes, validate stability.  
-- **Developers:** Diagnose root cause, provide code/config fixes.  
-- **Security Team:** Investigate if incident relates to IAM, data breaches, or attacks.  
-- **Management:** Approve high-impact changes, communicate updates externally.  
+- **DevOps Engineers:** Rollback task definitions, manage deployments, monitor stability.  
+- **SRE Team:** Coordinate incident bridge calls, act as incident commanders.  
+- **Developers:** Debug application code, rebuild fixed Docker images.  
+- **Network/Security Teams:** Validate ALB/NLB configs, IAM roles, security groups.  
+- **Leadership:** Communicate outage updates to business stakeholders.  
 
 ---
 
-## 7. Integrations with Jira  
+## 6. Traffic Management Principles  
 
-- **PagerDuty / OpsGenie:** Auto-create Jira incidents from alerts.  
-- **CloudWatch / Datadog / Prometheus:** Trigger incident tickets directly.  
-- **Slack / MS Teams:** Sync Jira updates with war-room communication.  
-- **Confluence:** Postmortem templates linked directly to Jira incidents.  
+**Core Guidelines:**  
+- Use **ALB target groups** to decouple traffic from ECS tasks.  
+- Maintain **blue and green target groups** for safer cutovers.  
+- Automate rollbacks with **CodeDeploy + CloudWatch alarms**.  
+- Leverage **Service Auto Scaling** to handle traffic bursts during rollback.  
+
+Example: If new tasks fail health checks > 20% for 5 minutes, CodeDeploy reverts traffic to stable target group automatically.  
+
+---
+
+## 7. Case Study: Rollback in ECS Production  
+An ECS Fargate service is updated with a new Docker image. Within minutes, ALB marks 60% of targets as unhealthy. CloudWatch alarms fire, and PagerDuty alerts the on-call engineer. The incident commander declares SEV-1. Rollback is executed by pointing the ECS service back to the last stable task definition revision. Within 3 minutes, traffic stabilizes. Postmortem identifies a missing environment variable in the new container image, prompting the addition of automated image validation checks in the CI/CD pipeline.  
 
 ---
 
 ## 8. Governance & Compliance  
 
-- All SEV-1 and SEV-2 incidents require **mandatory RCA documentation** within 48 hours.  
-- Jira tickets must include **time-to-detect, time-to-contain, and time-to-recover** metrics.  
-- Weekly reports generated from Jira for leadership review (trend analysis, SLA adherence).  
-- Audit logs via **Jira history + CloudTrail (for AWS-linked automation)**.  
+- All ECS rollbacks must be logged in **incident tracking systems** (e.g., ServiceNow).  
+- RCA reports must include task definition revision IDs and deployment logs.  
+- ECS activity (task/service updates) is auditable via **CloudTrail**.  
+- Security and compliance checks must validate IAM role changes during rollback.  
 
 ---
 
-## 9. Reporting & Continuous Improvement  
+## 9. Summary Snapshot  
 
-**Jira Dashboards for Incident Management:**  
-- Open Incidents by Severity.  
-- MTTR (Mean Time to Recovery) trends.  
-- Top recurring incident categories.  
-- SLA compliance reports.  
-
-**Improvement Practices:**  
-- Tagging incidents by root cause (infra, app, config, security).  
-- Feeding incident learnings into **automation, CI/CD pipelines, and runbooks**.  
-- Conducting **blameless postmortems** for cultural maturity.  
+| Focus Area              | Best Practice                             | Rollback Method                          |
+|--------------------------|-------------------------------------------|------------------------------------------|
+| Deployment Safety        | Use min/max healthy % configs             | Service redeploy with prior revision     |
+| Alias/Traffic Abstraction| ALB Target Groups for routing             | Blue/Green traffic shift                 |
+| Incident Response        | SEV lifecycle + RCA discipline            | Rollback to stable revision              |
+| Observability            | CloudWatch, Container Insights, ALB checks| Errors drive rollback triggers           |
+| Governance               | RCA, audit logs, ServiceNow/JIRA tickets  | Compliance enforced via CloudTrail        |
 
 ---
 
 ## 10. Conclusion  
-Using Jira for Incident Response provides organizations with a **centralized, auditable, and automated framework** to handle outages and performance issues. With the right **issue types, severity classification, workflow automation, and governance controls**, Jira transforms incident management into a disciplined, measurable process.  
-
-Over years of practice, the lesson is clear: incidents will happen, but **how we respond, document, and learn** defines organizational resilience. Jira, when implemented effectively, becomes not just a ticketing system but the **nerve center of incident response maturity**.  
+ECS provides scalable container orchestration, but resilience depends on **rollback agility and incident readiness**. By leveraging task definition revisions, deployment configurations, and blue/green rollouts, teams can achieve near-zero downtime even during faulty deployments. Coupled with structured incident workflows, observability, and compliance enforcement, this framework ensures both **technical resilience** and **organizational trust**.  
 
 ---
